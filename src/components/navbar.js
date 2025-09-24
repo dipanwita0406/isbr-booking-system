@@ -1,3 +1,4 @@
+'use client';
 import { useState, useEffect } from "react";
 import { Menu, X } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -13,26 +14,25 @@ export default function Navbar() {
 
   const router = useRouter();
 
-  // scroll state
+  const adminEmails = [
+    'dipanwita957@gmail.com'
+  ];
+
+  const isAdminEmail = (email) => {
+    return adminEmails.includes(email.toLowerCase());
+  };
+
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 10);
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // auth + role check
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-
-        try {
-          const token = await currentUser.getIdTokenResult(true);
-          setIsAdmin(!!token.claims.admin); // expects custom claim "admin"
-        } catch (err) {
-          console.error("Error fetching user claims:", err);
-          setIsAdmin(false);
-        }
+        setIsAdmin(isAdminEmail(currentUser.email));
       } else {
         setUser(null);
         setIsAdmin(false);
@@ -65,7 +65,16 @@ export default function Navbar() {
     if (href === "/bookings") {
       if (!user) {
         router.push("/login");
-      } else if (isAdmin) {
+        return;
+      }
+
+      if (loading) {
+        return;
+      }
+
+      const userIsAdmin = isAdminEmail(user.email);
+      
+      if (userIsAdmin) {
         router.push("/admin-management");
       } else {
         router.push("/bookings");
@@ -90,7 +99,6 @@ export default function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-8 lg:px-12">
         <div className="flex items-center justify-between h-20">
-          {/* Logo + title */}
           <div
             className="flex items-center space-x-3 flex-shrink-0 cursor-pointer"
             onClick={() => router.push("/")}
@@ -106,7 +114,6 @@ export default function Navbar() {
             </div>
           </div>
 
-          {/* Desktop Nav */}
           <div className="hidden md:flex items-center space-x-8">
             {navItems.map((item) => (
               <button
@@ -119,7 +126,6 @@ export default function Navbar() {
             ))}
           </div>
 
-          {/* Right side: login/logout */}
           <div className="flex items-center space-x-6">
             <div className="hidden md:block">
               {loading ? (
@@ -151,7 +157,6 @@ export default function Navbar() {
               )}
             </div>
 
-            {/* Mobile menu toggle */}
             <div className="md:hidden">
               <button
                 onClick={() => setIsMenuOpen(!isMenuOpen)}
@@ -163,7 +168,6 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Mobile Menu */}
         {isMenuOpen && (
           <div className="md:hidden">
             <div className="px-6 pt-4 pb-6 space-y-4 bg-white/95 backdrop-blur-xl border-t border-gray-200 shadow-lg">
