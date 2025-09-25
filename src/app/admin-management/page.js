@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   CheckCircle, 
@@ -65,13 +65,13 @@ export default function AdminManagement() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (bookings.length > 0) {
       filterBookings();
     }
-  }, [bookings, searchTerm, statusFilter]);
+  }, [bookings, searchTerm, statusFilter, filterBookings]);
 
   const loadBookings = () => {
     const bookingsRef = ref(database, 'bookings');
@@ -91,25 +91,25 @@ export default function AdminManagement() {
     });
   };
 
-  const filterBookings = () => {
-    let filtered = bookings;
+  const filterBookings = useCallback(() => {
+  let filtered = bookings;
 
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(booking => booking.status === statusFilter);
-    }
+  if (statusFilter !== 'all') {
+    filtered = filtered.filter(booking => booking.status === statusFilter);
+  }
 
-    if (searchTerm) {
-      filtered = filtered.filter(booking =>
-        booking.facilityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.userEmail?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.venue?.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
+  if (searchTerm) {
+    filtered = filtered.filter(booking =>
+      booking.facilityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.userEmail?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.venue?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }
 
-    setFilteredBookings(filtered);
-  };
+  setFilteredBookings(filtered);
+}, [bookings, statusFilter, searchTerm]);
 
   const handleAction = (booking, action) => {
     setSelectedBooking(booking);

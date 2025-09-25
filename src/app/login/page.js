@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Mail, Lock, AlertCircle, CheckCircle, Loader2, Shield, User as UserIcon, MapPin, Clock, Users, Calendar } from 'lucide-react';
 import { 
@@ -14,6 +14,7 @@ import {
 import { auth, database } from '../../../firebase-config';
 import { ref, set, get, push } from 'firebase/database';
 import Navbar from '@/components/navbar';
+import Image from 'next/image';
 
 const googleProvider = new GoogleAuthProvider();
 
@@ -46,17 +47,171 @@ export default function Login() {
     'dipanwita957@gmail.com'
   ];
 
+  // Define helper functions with useCallback FIRST
+  const isAdminEmail = useCallback((email) => {
+    return adminEmails.includes(email.toLowerCase());
+  }, [adminEmails]);
+
+  // Safe navigation helper
+  const safeNavigate = useCallback((path, delay = 1000) => {
+    try {
+      setTimeout(() => {
+        router.push(path);
+      }, delay);
+    } catch (error) {
+      console.warn('Navigation error:', error);
+      setTimeout(() => {
+        if (typeof window !== 'undefined') {
+          window.location.href = path;
+        }
+      }, delay + 500);
+    }
+  }, [router]);
+
+  const storeUserInFirebase = useCallback(async (user, isNewUser = false, additionalData = {}) => {
+    try {
+      const isAdmin = isAdminEmail(user.email);
+      const userRef = ref(database, `users/${user.uid}`);
+      
+      let userData = {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || additionalData.fullName || user.email.split('@')[0],
+        photoURL: user.photoURL || '',
+        role: isAdmin ? 'admin' : 'user',
+        lastLogin: new Date().toISOString(),
+        ...additionalData
+      };
+
+      if (isNewUser) {
+        userData.createdAt = new Date().toISOString();
+      }
+
+      try {
+        const existingUser = await get(userRef);
+        if (!existingUser.exists() || isNewUser) {
+          await set(userRef, userData);
+        } else {
+          const existingData = existingUser.val();
+          userData = { ...existingData, lastLogin: new Date().toISOString() };
+          await set(userRef, userData);
+        }
+        
+        console.log('User data stored successfully:', userData);
+        return userData;
+      } catch (databaseError) {
+        console.error('Database storage error:', databaseError);
+        
+        try {
+          const fallbackRef = ref(database, `user_logs`);
+          await push(fallbackRef, {
+            uid: user.uid,
+            email: user.email,
+            timestamp: new Date().toISOString(),
+            action: isNewUser ? 'signup' : 'login',
+            error: databaseError.message
+          });
+          console.log('Fallback log created');
+        } catch (fallbackError) {
+          console.error('Fallback storage also failed:', fallbackError);
+        }
+
+        return userData;
+      }
+    } catch (error) {
+      console.error('Error in storeUserInFirebase:', error);
+      
+      const isAdmin = isAdminEmail(user.email);
+      return {
+        uid: user.uid,
+        email: user.email,
+        role: isAdmin ? 'admin' : 'user',
+        displayName: user.displayName || additionalData.fullName || user.email.split('@')[0]
+      };
+    }
+  }, [isAdminEmail]);
+
+  const handleUserAfterAuth = useCallback(async (user, isNewUser = false, additionalData = {}) => {
+    try {
+      const userData = await storeUserInFirebase(user, isNewUser, additionalData);
+      
+      const expectedRole = isAdminEmail(user.email) ? 'admin' : 'user';
+      const selectedRole = userType === 'admin' ? 'admin' : 'user';
+      
+      if (expectedRole !== selectedRole) {
+        setLoading(false);
+        if (isLogin) {
+          if (expectedRole === 'admin') {
+            setErrors({ general: 'This is an admin account. Please use the Admin login option.' });
+          } else {
+            setErrors({ general: 'This account is not authorized for admin access. Please use Student/Staff login.' });
+          }
+        } else {
+          if (expectedRole === 'admin') {
+            setErrors({ general: 'This email has admin privileges. Please select Admin account type to proceed.' });
+          } else {
+            setErrors({ general: 'This email is not authorized for admin access. Please select Student/Staff account type.' });
+          }
+        }
+        return;
+      }
+      
+      setLoading(false);
+      if (userData.role === 'admin') {
+        safeNavigate('/admin-management', 1500);
+      } else {
+        safeNavigate('/bookings', 1500);
+      }
+    } catch (error) {
+      console.error('Error handling user after auth:', error);
+      setLoading(false);
+      
+      setErrors({ general: 'Login successful, but there was an issue saving your data. Redirecting...' });
+      
+      const isAdmin = isAdminEmail(user.email);
+      safeNavigate(isAdmin ? '/admin-management' : '/bookings', 2000);
+    }
+  }, [storeUserInFirebase, safeNavigate, isAdminEmail, userType, isLogin]);
+
+  // Define handleExistingUser with useCallback BEFORE useEffect
+  const handleExistingUser = useCallback(async (user) => {
+    try {
+      const userData = await storeUserInFirebase(user, false);
+      
+      if (userData.role === 'admin') {
+        safeNavigate('/admin-management');
+      } else {
+        safeNavigate('/bookings');
+      }
+    } catch (error) {
+      console.error('Error handling existing user:', error);
+      const isAdmin = isAdminEmail(user.email);
+      safeNavigate(isAdmin ? '/admin-management' : '/bookings');
+    }
+  }, [storeUserInFirebase, safeNavigate, isAdminEmail]);
+
+  // NOW useEffect can safely reference handleExistingUser
   useEffect(() => {
     setMounted(true);
     
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && !loading) {
-        handleExistingUser(user);
-      }
-    });
+    try {
+      const unsubscribe = onAuthStateChanged(auth, (user) => {
+        if (user && !loading) {
+          handleExistingUser(user);
+        }
+      });
 
-    return () => unsubscribe();
-  }, []);
+      return () => {
+        try {
+          unsubscribe();
+        } catch (error) {
+          console.warn('Error unsubscribing from auth state:', error);
+        }
+      };
+    } catch (error) {
+      console.error('Error setting up auth state listener:', error);
+    }
+  }, [handleExistingUser, loading]);
 
   useEffect(() => {
     if (!isLogin && formData.password) {
@@ -69,26 +224,6 @@ export default function Login() {
       });
     }
   }, [formData.password, isLogin]);
-
-  const isAdminEmail = (email) => {
-    return adminEmails.includes(email.toLowerCase());
-  };
-
-  const handleExistingUser = async (user) => {
-    try {
-      const userData = await storeUserInFirebase(user, false);
-      
-      setTimeout(() => {
-        if (userData.role === 'admin') {
-          router.push('/admin-management');
-        } else {
-          router.push('/bookings');
-        }
-      }, 1000);
-    } catch (error) {
-      console.error('Error handling existing user:', error);
-    }
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -108,7 +243,6 @@ export default function Login() {
       newErrors.email = 'Please enter a valid email address';
     }
     
-    // Validate user type for both login and signup
     if (userType === 'admin' && !isAdminEmail(formData.email)) {
       if (isLogin) {
         newErrors.email = 'This email is not authorized for admin access. Please use a valid admin email or switch to Student/Staff login.';
@@ -149,121 +283,22 @@ export default function Login() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const storeUserInFirebase = async (user, isNewUser = false, additionalData = {}) => {
-    try {
-      const isAdmin = isAdminEmail(user.email);
-      const userRef = ref(database, `users/${user.uid}`);
-      
-      let userData = {
-        uid: user.uid,
-        email: user.email,
-        displayName: user.displayName || additionalData.fullName || user.email.split('@')[0],
-        photoURL: user.photoURL || '',
-        role: isAdmin ? 'admin' : 'user',
-        lastLogin: new Date().toISOString(),
-        ...additionalData
-      };
-
-      if (isNewUser) {
-        userData.createdAt = new Date().toISOString();
-      }
-
-      const existingUser = await get(userRef);
-      if (!existingUser.exists() || isNewUser) {
-        await set(userRef, userData);
-      } else {
-        const existingData = existingUser.val();
-        userData = { ...existingData, lastLogin: new Date().toISOString() };
-        await set(userRef, userData);
-      }
-
-      console.log('User data stored successfully:', userData);
-      return userData;
-    } catch (error) {
-      console.error('Error storing user data:', error);
-      
-      try {
-        const fallbackRef = ref(database, `user_logs`);
-        await push(fallbackRef, {
-          uid: user.uid,
-          email: user.email,
-          timestamp: new Date().toISOString(),
-          action: isNewUser ? 'signup' : 'login'
-        });
-      } catch (fallbackError) {
-        console.error('Fallback storage also failed:', fallbackError);
-      }
-
-      throw error;
-    }
-  };
-
-  const handleUserAfterAuth = async (user, isNewUser = false, additionalData = {}) => {
-    try {
-      const userData = await storeUserInFirebase(user, isNewUser, additionalData);
-      
-      // Verify user type matches email for both login and signup
-      const expectedRole = isAdminEmail(user.email) ? 'admin' : 'user';
-      const selectedRole = userType === 'admin' ? 'admin' : 'user';
-      
-      if (expectedRole !== selectedRole) {
-        setLoading(false);
-        if (isLogin) {
-          if (expectedRole === 'admin') {
-            setErrors({ general: 'This is an admin account. Please use the Admin login option.' });
-          } else {
-            setErrors({ general: 'This account is not authorized for admin access. Please use Student/Staff login.' });
-          }
-        } else {
-          if (expectedRole === 'admin') {
-            setErrors({ general: 'This email has admin privileges. Please select Admin account type to proceed.' });
-          } else {
-            setErrors({ general: 'This email is not authorized for admin access. Please select Student/Staff account type.' });
-          }
-        }
-        return;
-      }
-      
-      setTimeout(() => {
-        setLoading(false);
-        if (userData.role === 'admin') {
-          router.push('/admin-management');
-        } else {
-          router.push('/bookings');
-        }
-      }, 1500);
-    } catch (error) {
-      console.error('Error handling user after auth:', error);
-      setLoading(false);
-      
-      // Fallback navigation
-      setTimeout(() => {
-        const isAdmin = isAdminEmail(user.email);
-        if (isAdmin) {
-          router.push('/admin-management');
-        } else {
-          router.push('/bookings');
-        }
-      }, 1000);
-    }
-  };
-
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  
-  if (!validateForm()) return;
-  
-  setLoading(true);
-  setErrors({});
-  
-  try {
-    if (isLogin) {
-      const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
-      await handleUserAfterAuth(userCredential.user, false, { selectedUserType: userType });
-    } else {
-      const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
-      await handleUserAfterAuth(userCredential.user, true, { fullName: formData.fullName, selectedUserType: userType });
-    }
+    e.preventDefault();
+    
+    if (!validateForm()) return;
+    
+    setLoading(true);
+    setErrors({});
+    
+    try {
+      if (isLogin) {
+        const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+        await handleUserAfterAuth(userCredential.user, false, { selectedUserType: userType });
+      } else {
+        const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        await handleUserAfterAuth(userCredential.user, true, { fullName: formData.fullName, selectedUserType: userType });
+      }
     } catch (error) {
       console.error('Authentication error:', error);
       let errorMessage = 'Something went wrong. Please try again.';
@@ -302,6 +337,9 @@ export default function Login() {
         case 'auth/requires-recent-login':
           errorMessage = 'Please log out and log back in before retrying this operation.';
           break;
+        default:
+          console.error('Unhandled auth error:', error);
+          errorMessage = 'Authentication failed. Please try again or contact support if the problem persists.';
       }
       
       setErrors({ general: errorMessage });
@@ -317,7 +355,6 @@ export default function Login() {
       const result = await signInWithPopup(auth, googleProvider);
       const isNewUser = result._tokenResponse?.isNewUser || false;
       
-      // For Google sign-in, we need to check if the email matches the selected user type
       const isAdmin = isAdminEmail(result.user.email);
       const expectedRole = isAdmin ? 'admin' : 'user';
       const selectedRole = userType === 'admin' ? 'admin' : 'user';
@@ -361,6 +398,8 @@ export default function Login() {
         case 'auth/account-exists-with-different-credential':
           errorMessage = 'An account already exists with this email using a different sign-in method. Please try signing in with email and password.';
           break;
+        default:
+          console.error('Unhandled Google auth error:', error);
       }
       
       setErrors({ general: errorMessage });
@@ -383,6 +422,7 @@ export default function Login() {
       await sendPasswordResetEmail(auth, formData.email);
       setResetEmailSent(true);
       setErrors({});
+      console.log('Password reset email sent to:', formData.email);
     } catch (error) {
       console.error('Password reset error:', error);
       let errorMessage = 'Failed to send password reset email. Please try again.';
@@ -400,6 +440,8 @@ export default function Login() {
         case 'auth/network-request-failed':
           errorMessage = 'Network error. Please check your internet connection and try again.';
           break;
+        default:
+          console.error('Unhandled password reset error:', error);
       }
       
       setErrors({ general: errorMessage });
@@ -461,7 +503,7 @@ export default function Login() {
       <div className="absolute top-[-5rem] left-[-5rem] w-72 h-72 z-0 opacity-30">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M60.9,-0.3C60.9,25.5,30.4,51,1.2,51C-27.9,51,-55.9,25.5,-55.9,-0.3C-55.9,-26.1,-27.9,-52.1,1.2,-52.1C30.4,-52.1,60.9,-26.1,60.9,-0.3Z"
             transform="translate(100 100)"
           />
@@ -471,7 +513,7 @@ export default function Login() {
       <div className="absolute bottom-[-6rem] right-[-6rem] w-96 h-96 z-0 opacity-20">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M61,-62.3C75.4,-46.6,81,-23.3,80.1,-0.9C79.3,21.6,72,43.1,57.6,59.7C43.1,76.4,21.6,88,2.2,85.9C-17.3,83.7,-34.5,67.7,-49.9,51.1C-65.3,34.5,-78.9,17.3,-77.7,1.2C-76.5,-14.9,-60.6,-29.7,-45.2,-45.5C-29.7,-61.3,-14.9,-77.9,4.2,-82.1C23.3,-86.3,46.6,-78.1,61,-62.3Z"
             transform="translate(100 100)"
           />
@@ -481,7 +523,7 @@ export default function Login() {
       <div className="absolute top-1/3 left-1/4 w-64 h-64 z-0 opacity-15">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M45.8,-58.1C60.7,-48.7,75.4,-35.2,81.5,-18.3C87.6,-1.4,85.2,18.8,73.9,31.5C62.6,44.2,42.3,49.3,22.9,56.3C3.5,63.3,-15,72.2,-32.7,67.9C-50.4,63.6,-67.2,46.2,-71.9,26.2C-76.6,6.2,-69.1,-16.4,-55.8,-29.9C-42.5,-43.4,-23.3,-47.8,-5.3,-44.9C12.7,-42,25.5,-32,45.8,-58.1Z"
             transform="translate(100 100)"
           />
@@ -491,22 +533,20 @@ export default function Login() {
       <div className="absolute top-2/3 right-1/3 w-48 h-48 z-0 opacity-25">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M35.2,-47.8C44.8,-35.6,50.1,-22.4,52.3,-8.1C54.5,6.2,53.6,21.6,46.8,33.2C40,44.8,27.3,52.6,13.1,55.9C-1.1,59.2,-16.8,57.9,-29.9,51.2C-43,44.5,-53.5,32.4,-58.1,18.7C-62.7,5,-61.4,-10.3,-54.8,-22.8C-48.2,-35.3,-36.3,-45,-22.4,-54.2C-8.5,-63.4,7.4,-72.1,21.8,-67.3C36.2,-62.5,49.1,-44.2,35.2,-47.8Z"
             transform="translate(100 100)"
           />
         </svg>
       </div>
       
-      <div className="flex min-h-screen relative z-10 my-">
+      <div className="flex min-h-screen relative z-10">
         {/* Left Side - ISBR Information */}
         <div className="hidden lg:flex lg:w-1/2 bg-white flex-col justify-center px-12 xl:px-16">
           <div className="max-w-md">
             <div className="mb-8">
               <div className="flex items-center space-x-3 mb-6">
-                
-                  <img src="/file.svg" alt="Logo" className="h-10 w-10" />
-               
+                <Image src="/file.svg" alt="Logo" className="h-10 w-10" width={40} height={40} />
                 <div>
                   <h1 className="text-2xl font-bold text-black">ISBR College</h1>
                   <p className="text-gray-600 text-sm">Bangalore</p>
@@ -810,7 +850,7 @@ export default function Login() {
                 )}
                 
                 <p className="text-sm font-medium text-black">
-                  {isLogin ? "Don't have an account?" : "Already have an account?"}{' '}
+                  {isLogin ? "Don&apos;t have an account?" : "Already have an account?"}{' '}
                   <button
                     type="button"
                     onClick={() => {

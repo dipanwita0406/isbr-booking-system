@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { database, auth } from '../../../firebase-config';
 import { ref, push, onValue, query, orderByChild, equalTo } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -37,10 +37,24 @@ const BookingSystem = () => {
 
     return () => unsubscribe();
   }, [router]);
+const filterBookings = () => {
+    if (!searchTerm.trim()) {
+      setFilteredBookings(userBookings);
+      return;
+    }
 
+    const filtered = userBookings.filter(booking =>
+      booking.venue?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      formatDate(booking.date).toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    setFilteredBookings(filtered);
+  };
   useEffect(() => {
     filterBookings();
-  }, [userBookings, searchTerm]);
+  }, [userBookings, searchTerm, filterBookings]);
 
   const loadUserBookings = (userId) => {
     const userBookingsRef = query(
@@ -80,21 +94,7 @@ const BookingSystem = () => {
     });
   };
 
-  const filterBookings = () => {
-    if (!searchTerm.trim()) {
-      setFilteredBookings(userBookings);
-      return;
-    }
-
-    const filtered = userBookings.filter(booking =>
-      booking.venue?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      formatDate(booking.date).toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    setFilteredBookings(filtered);
-  };
+  
 
   const checkForConflicts = (venue, date, startTime, endTime) => {
     const newStart = new Date(`${date}T${startTime}`);

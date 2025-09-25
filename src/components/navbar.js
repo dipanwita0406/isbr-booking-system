@@ -1,9 +1,10 @@
 'use client';
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Menu, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { auth } from "../../firebase-config";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import Image from "next/image";
 
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -18,9 +19,9 @@ export default function Navbar() {
     'dipanwita957@gmail.com'
   ];
 
-  const isAdminEmail = (email) => {
-    return adminEmails.includes(email.toLowerCase());
-  };
+  const isAdminEmail = useCallback((email) => {
+  return adminEmails.includes(email.toLowerCase());
+}, [adminEmails]);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 10);
@@ -40,7 +41,7 @@ export default function Navbar() {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [isAdminEmail]);
 
   const handleSignOut = async () => {
     try {
@@ -103,7 +104,7 @@ export default function Navbar() {
             className="flex items-center space-x-3 flex-shrink-0 cursor-pointer"
             onClick={() => router.push("/")}
           >
-            <img src="/file.svg" alt="Logo" className="h-10 w-10" />
+            <Image src="/file.svg" alt="Logo" className="h-10 w-10" width={40} height={40} />
             <div>
               <h1 className="text-3xl font-bold tracking-tight text-gray-900">
                 ISBR

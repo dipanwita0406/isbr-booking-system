@@ -61,7 +61,7 @@ export default function Homepage() {
             </h1>
 
             <p className="text-xl md:text-2xl text-gray-600 mb-12 max-w-4xl mx-auto leading-relaxed">
-              ISBR College's intelligent booking system transforms how you reserve auditoriums and
+              ISBR College&apos;s intelligent booking system transforms how you reserve auditoriums and
               board rooms. Real-time availability, instant confirmations, and seamless management
               for students and staff.
             </p>
