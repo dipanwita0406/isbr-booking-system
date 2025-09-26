@@ -87,7 +87,7 @@ export default function Navbar() {
 
   const navItems = [
     { name: "Bookings", href: "/bookings" },
-    { name: "Facilities", href: "/facilities" },
+    
   ];
 
   return (

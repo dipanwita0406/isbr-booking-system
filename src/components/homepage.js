@@ -2,14 +2,13 @@
 
 import { MapPin, ArrowRight } from 'lucide-react';
 import Navbar from './navbar';
+import { useRouter } from 'next/navigation';
 
 export default function Homepage() {
+  const router = useRouter();
+  
   const handleStartBooking = () => {
-    console.log('Start booking clicked');
-  };
-
-  const handleViewDemo = () => {
-    console.log('View demo clicked');
+    router.push('/bookings');
   };
 
   return (
@@ -77,16 +76,6 @@ export default function Homepage() {
                     size={20}
                     className="group-hover:translate-x-1 transition-transform"
                   />
-                </span>
-              </button>
-
-              <button
-                onClick={handleViewDemo}
-                className="group px-8 py-4 border-2 border-[#7F1D1D] rounded-2xl text-[#7F1D1D] font-semibold text-lg transition-all duration-300 hover:border-yellow-600 hover:bg-yellow-50 hover:scale-105"
-              >
-                <span className="flex items-center space-x-2">
-                  <MapPin size={20} />
-                  <span>View Facilities</span>
                 </span>
               </button>
             </div>
