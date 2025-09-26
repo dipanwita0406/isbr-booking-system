@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   CheckCircle, 
@@ -23,7 +23,7 @@ import { ref, onValue, update, get, push } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
 import Navbar from '@/components/navbar';
 
-export default function AdminManagement() {
+const AdminManagement = () => {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +37,45 @@ export default function AdminManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [mounted, setMounted] = useState(false);
+
+  const filterBookings = useCallback(() => {
+    let filtered = bookings;
+
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(booking => booking.status === statusFilter);
+    }
+
+    if (searchTerm) {
+      filtered = filtered.filter(booking =>
+        booking.facilityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        booking.userEmail?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        booking.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        booking.venue?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    setFilteredBookings(filtered);
+  }, [bookings, statusFilter, searchTerm]);
+
+  const loadBookings = useCallback(() => {
+    const bookingsRef = ref(database, 'bookings');
+    const unsubscribe = onValue(bookingsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const bookingsArray = Object.keys(data).map(key => ({
+          id: key,
+          ...data[key]
+        }));
+        
+        bookingsArray.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setBookings(bookingsArray);
+      } else {
+        setBookings([]);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -65,7 +104,7 @@ export default function AdminManagement() {
     });
 
     return () => unsubscribe();
-  }, [router]);
+  }, [router, loadBookings]);
 
   useEffect(() => {
     if (bookings.length > 0) {
@@ -73,52 +112,14 @@ export default function AdminManagement() {
     }
   }, [bookings, searchTerm, statusFilter, filterBookings]);
 
-  const loadBookings = () => {
-    const bookingsRef = ref(database, 'bookings');
-    onValue(bookingsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const bookingsArray = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
-        }));
-        
-        bookingsArray.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        setBookings(bookingsArray);
-      } else {
-        setBookings([]);
-      }
-    });
-  };
-
-  const filterBookings = useCallback(() => {
-  let filtered = bookings;
-
-  if (statusFilter !== 'all') {
-    filtered = filtered.filter(booking => booking.status === statusFilter);
-  }
-
-  if (searchTerm) {
-    filtered = filtered.filter(booking =>
-      booking.facilityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.userEmail?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.venue?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }
-
-  setFilteredBookings(filtered);
-}, [bookings, statusFilter, searchTerm]);
-
-  const handleAction = (booking, action) => {
+  const handleAction = useCallback((booking, action) => {
     setSelectedBooking(booking);
     setActionType(action);
     setShowReasonModal(true);
     setReason('');
-  };
+  }, []);
 
-  const confirmAction = async () => {
+  const confirmAction = useCallback(async () => {
     if (!selectedBooking || !actionType) return;
 
     setActionLoading(true);
@@ -127,7 +128,7 @@ export default function AdminManagement() {
       const updateData = {
         status: actionType,
         [`${actionType}At`]: new Date().toISOString(),
-        [`${actionType}By`]: currentUser.uid || auth.currentUser?.uid,
+        [`${actionType}By`]: currentUser?.uid || auth.currentUser?.uid,
         [`${actionType}Reason`]: reason.trim() || null
       };
 
@@ -153,9 +154,9 @@ export default function AdminManagement() {
     } finally {
       setActionLoading(false);
     }
-  };
+  }, [selectedBooking, actionType, reason, currentUser]);
 
-  const getStatusColor = (status) => {
+  const getStatusColor = useCallback((status) => {
     switch (status) {
       case 'approved':
         return 'text-green-700 bg-green-50 border-green-300';
@@ -166,9 +167,9 @@ export default function AdminManagement() {
       default:
         return 'text-gray-700 bg-gray-50 border-gray-300';
     }
-  };
+  }, []);
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = useCallback((status) => {
     switch (status) {
       case 'approved':
         return <CheckCircle size={16} />;
@@ -179,9 +180,10 @@ export default function AdminManagement() {
       default:
         return <AlertCircle size={16} />;
     }
-  };
+  }, []);
 
-  const formatDateTime = (dateTimeString) => {
+  const formatDateTime = useCallback((dateTimeString) => {
+    if (!dateTimeString) return '';
     return new Date(dateTimeString).toLocaleString('en-IN', {
       day: '2-digit',
       month: 'short',
@@ -190,15 +192,16 @@ export default function AdminManagement() {
       minute: '2-digit',
       hour12: true
     });
-  };
+  }, []);
 
-  const formatDate = (dateString) => {
+  const formatDate = useCallback((dateString) => {
+    if (!dateString) return '';
     return new Date(dateString).toLocaleDateString('en-IN', {
       day: '2-digit',
       month: 'short',
       year: 'numeric'
     });
-  };
+  }, []);
 
   if (!mounted) return null;
 
@@ -221,7 +224,7 @@ export default function AdminManagement() {
       <div className="absolute top-[-5rem] left-[-5rem] w-72 h-72 z-0 opacity-15">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M60.9,-0.3C60.9,25.5,30.4,51,1.2,51C-27.9,51,-55.9,25.5,-55.9,-0.3C-55.9,-26.1,-27.9,-52.1,1.2,-52.1C30.4,-52.1,60.9,-26.1,60.9,-0.3Z"
             transform="translate(100 100)"
           />
@@ -231,7 +234,7 @@ export default function AdminManagement() {
       <div className="absolute bottom-[-6rem] right-[-6rem] w-96 h-96 z-0 opacity-10">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M61,-62.3C75.4,-46.6,81,-23.3,80.1,-0.9C79.3,21.6,72,43.1,57.6,59.7C43.1,76.4,21.6,88,2.2,85.9C-17.3,83.7,-34.5,67.7,-49.9,51.1C-65.3,34.5,-78.9,17.3,-77.7,1.2C-76.5,-14.9,-60.6,-29.7,-45.2,-45.5C-29.7,-61.3,-14.9,-77.9,4.2,-82.1C23.3,-86.3,46.6,-78.1,61,-62.3Z"
             transform="translate(100 100)"
           />
@@ -241,7 +244,7 @@ export default function AdminManagement() {
       <div className="absolute top-1/3 right-1/4 w-64 h-64 z-0 opacity-20">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M45.8,-58.1C60.7,-48.7,75.4,-35.2,81.5,-18.3C87.6,-1.4,85.2,18.8,73.9,31.5C62.6,44.2,42.3,49.3,22.9,56.3C3.5,63.3,-15,72.2,-32.7,67.9C-50.4,63.6,-67.2,46.2,-71.9,26.2C-76.6,6.2,-69.1,-16.4,-55.8,-29.9C-42.5,-43.4,-23.3,-47.8,-5.3,-44.9C12.7,-42,25.5,-32,45.8,-58.1Z"
             transform="translate(100 100)"
           />
@@ -251,7 +254,7 @@ export default function AdminManagement() {
       <div className="absolute top-2/3 left-1/4 w-48 h-48 z-0 opacity-12">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path
-            fill="#7F1D1D" /* maroon */
+            fill="#7F1D1D"
             d="M35.2,-47.8C44.8,-35.6,50.1,-22.4,52.3,-8.1C54.5,6.2,53.6,21.6,46.8,33.2C40,44.8,27.3,52.6,13.1,55.9C-1.1,59.2,-16.8,57.9,-29.9,51.2C-43,44.5,-53.5,32.4,-58.1,18.7C-62.7,5,-61.4,-10.3,-54.8,-22.8C-48.2,-35.3,-36.3,-45,-22.4,-54.2C-8.5,-63.4,7.4,-72.1,21.8,-67.3C36.2,-62.5,49.1,-44.2,35.2,-47.8Z"
             transform="translate(100 100)"
           />
@@ -481,4 +484,6 @@ export default function AdminManagement() {
       )}
     </div>
   );
-}
+};
+
+export default AdminManagement;
