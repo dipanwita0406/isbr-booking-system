@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { database, auth } from '../../../firebase-config';
 import { ref, push, onValue, query, orderByChild, equalTo } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -9,9 +9,8 @@ import { useRouter } from 'next/navigation';
 
 const BookingSystem = () => {
   const [selectedVenue, setSelectedVenue] = useState('board room');
-  const [bookingDate, setBookingDate] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedSlots, setSelectedSlots] = useState([]);
   const [purpose, setPurpose] = useState('');
   const [participants, setParticipants] = useState('');
   const [specialRequirements, setSpecialRequirements] = useState('');
@@ -22,7 +21,30 @@ const BookingSystem = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [currentUser, setCurrentUser] = useState(null);
+  const [availableSlots, setAvailableSlots] = useState([]);
   const router = useRouter();
+
+  // Generate time slots from 8 AM to 10 PM (1-hour slots)
+  const generateTimeSlots = () => {
+    const slots = [];
+    for (let hour = 8; hour < 22; hour++) {
+      const startTime = `${hour.toString().padStart(2, '0')}:00`;
+      const endTime = `${(hour + 1).toString().padStart(2, '0')}:00`;
+      const displayStart = hour < 12 ? `${hour}:00 AM` : hour === 12 ? '12:00 PM' : `${hour - 12}:00 PM`;
+      const displayEnd = (hour + 1) < 12 ? `${hour + 1}:00 AM` : (hour + 1) === 12 ? '12:00 PM' : `${hour + 1 - 12}:00 PM`;
+      
+      slots.push({
+        id: `slot-${hour}`,
+        startTime,
+        endTime,
+        display: `${displayStart} - ${displayEnd}`,
+        hour
+      });
+    }
+    return slots;
+  };
+
+  const timeSlots = generateTimeSlots();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -37,24 +59,16 @@ const BookingSystem = () => {
 
     return () => unsubscribe();
   }, [router]);
-const filterBookings = () => {
-    if (!searchTerm.trim()) {
-      setFilteredBookings(userBookings);
-      return;
-    }
 
-    const filtered = userBookings.filter(booking =>
-      booking.venue?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      booking.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      formatDate(booking.date).toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    setFilteredBookings(filtered);
-  };
   useEffect(() => {
     filterBookings();
-  }, [userBookings, searchTerm, filterBookings]);
+  }, [userBookings, searchTerm]);
+
+  useEffect(() => {
+    if (selectedDate && selectedVenue) {
+      calculateAvailableSlots();
+    }
+  }, [selectedDate, selectedVenue, allBookings]);
 
   const loadUserBookings = (userId) => {
     const userBookingsRef = query(
@@ -94,22 +108,90 @@ const filterBookings = () => {
     });
   };
 
-  
+  const calculateAvailableSlots = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const selected = new Date(selectedDate);
+    selected.setHours(0, 0, 0, 0);
 
-  const checkForConflicts = (venue, date, startTime, endTime) => {
-    const newStart = new Date(`${date}T${startTime}`);
-    const newEnd = new Date(`${date}T${endTime}`);
+    const slots = timeSlots.map(slot => {
+      // Check if slot is in the past for today
+      const isPast = selected.getTime() === today.getTime() && slot.hour < new Date().getHours();
+      
+      // Check if slot is booked (approved bookings only)
+      const isBooked = allBookings.some(booking => {
+        if (booking.venue !== selectedVenue || booking.date !== selectedDate) {
+          return false;
+        }
+        
+        // Only consider approved bookings as unavailable
+        if (booking.status !== 'approved') {
+          return false;
+        }
 
-    return allBookings.some(booking => {
-      if (booking.venue !== venue || booking.date !== date || booking.status === 'rejected') {
-        return false;
-      }
+        const bookingStart = booking.startTime.split('T')[1].substring(0, 5);
+        const bookingEnd = booking.endTime.split('T')[1].substring(0, 5);
+        
+        // Check if this slot overlaps with the booking
+        return slot.startTime >= bookingStart && slot.startTime < bookingEnd;
+      });
 
-      const existingStart = new Date(`${booking.date}T${booking.startTime}`);
-      const existingEnd = new Date(`${booking.date}T${booking.endTime}`);
-
-      return (newStart < existingEnd && newEnd > existingStart);
+      return {
+        ...slot,
+        available: !isPast && !isBooked,
+        isPast,
+        isBooked
+      };
     });
+
+    setAvailableSlots(slots);
+  };
+
+  const filterBookings = () => {
+    if (!searchTerm.trim()) {
+      setFilteredBookings(userBookings);
+      return;
+    }
+
+    const filtered = userBookings.filter(booking =>
+      booking.venue?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      booking.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      formatDate(booking.date).toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    setFilteredBookings(filtered);
+  };
+
+  const handleSlotSelect = (slot) => {
+    if (!slot.available) return;
+
+    const slotIndex = selectedSlots.findIndex(s => s.id === slot.id);
+    
+    if (slotIndex > -1) {
+      // Deselect the slot
+      setSelectedSlots(selectedSlots.filter(s => s.id !== slot.id));
+    } else {
+      // Select the slot and sort by hour
+      const newSlots = [...selectedSlots, slot].sort((a, b) => a.hour - b.hour);
+      
+      // Check if slots are consecutive
+      let isConsecutive = true;
+      for (let i = 1; i < newSlots.length; i++) {
+        if (newSlots[i].hour !== newSlots[i - 1].hour + 1) {
+          isConsecutive = false;
+          break;
+        }
+      }
+      
+      if (!isConsecutive) {
+        setMessage({ type: 'error', text: 'Please select consecutive time slots only' });
+        return;
+      }
+      
+      setSelectedSlots(newSlots);
+      setMessage({ type: '', text: '' });
+    }
   };
 
   const handleSubmit = async () => {
@@ -118,19 +200,8 @@ const filterBookings = () => {
       return;
     }
 
-    if (!bookingDate || !startTime || !endTime || !purpose.trim() || !participants.trim()) {
-      setMessage({ type: 'error', text: 'Please fill in all required fields' });
-      return;
-    }
-
-    if (startTime >= endTime) {
-      setMessage({ type: 'error', text: 'End time must be after start time' });
-      return;
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    if (bookingDate < today) {
-      setMessage({ type: 'error', text: 'Cannot book for past dates' });
+    if (!selectedDate || selectedSlots.length === 0 || !purpose.trim() || !participants.trim()) {
+      setMessage({ type: 'error', text: 'Please fill in all required fields and select at least one time slot' });
       return;
     }
 
@@ -140,23 +211,27 @@ const filterBookings = () => {
       return;
     }
 
-    if (checkForConflicts(selectedVenue, bookingDate, startTime, endTime)) {
-      setMessage({ type: 'error', text: `${selectedVenue === 'board room' ? 'Board Room' : 'Auditorium'} is already booked for this time slot` });
+    const today = new Date().toISOString().split('T')[0];
+    if (selectedDate < today) {
+      setMessage({ type: 'error', text: 'Cannot book for past dates' });
       return;
     }
 
     setLoading(true);
 
     try {
+      const firstSlot = selectedSlots[0];
+      const lastSlot = selectedSlots[selectedSlots.length - 1];
+      
       const bookingData = {
         userId: currentUser.uid,
         userEmail: currentUser.email,
         userName: currentUser.displayName || currentUser.email,
         venue: selectedVenue,
         facilityName: selectedVenue === 'board room' ? 'Board Room' : 'Auditorium',
-        date: bookingDate,
-        startTime: `${bookingDate}T${startTime}:00`,
-        endTime: `${bookingDate}T${endTime}:00`,
+        date: selectedDate,
+        startTime: `${selectedDate}T${firstSlot.startTime}:00`,
+        endTime: `${selectedDate}T${lastSlot.endTime}:00`,
         purpose: purpose.trim(),
         participants: participantCount,
         specialRequirements: specialRequirements.trim() || null,
@@ -166,12 +241,12 @@ const filterBookings = () => {
 
       await push(ref(database, 'bookings'), bookingData);
 
-      setBookingDate('');
-      setStartTime('');
-      setEndTime('');
+      setSelectedDate('');
+      setSelectedSlots([]);
       setPurpose('');
       setParticipants('');
       setSpecialRequirements('');
+      setAvailableSlots([]);
 
       setMessage({ type: 'success', text: 'Booking request submitted successfully! Awaiting admin approval.' });
     } catch (error) {
@@ -296,7 +371,10 @@ const filterBookings = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <button
                       type="button"
-                      onClick={() => setSelectedVenue('board room')}
+                      onClick={() => {
+                        setSelectedVenue('board room');
+                        setSelectedSlots([]);
+                      }}
                       className={`p-6 rounded-xl border-2 transition-all duration-300 ${selectedVenue === 'board room'
                           ? 'border-yellow-400 bg-yellow-50 shadow-md'
                           : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
@@ -315,7 +393,10 @@ const filterBookings = () => {
 
                     <button
                       type="button"
-                      onClick={() => setSelectedVenue('auditorium')}
+                      onClick={() => {
+                        setSelectedVenue('auditorium');
+                        setSelectedSlots([]);
+                      }}
                       className={`p-6 rounded-xl border-2 transition-all duration-300 ${selectedVenue === 'auditorium'
                           ? 'border-yellow-400 bg-yellow-50 shadow-md'
                           : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
@@ -336,101 +417,150 @@ const filterBookings = () => {
 
                 <div>
                   <label className="block text-sm font-bold text-black mb-2">
-                    Booking Date
+                    Select Date
                   </label>
                   <input
                     type="date"
-                    value={bookingDate}
-                    onChange={(e) => setBookingDate(e.target.value)}
+                    value={selectedDate}
+                    onChange={(e) => {
+                      setSelectedDate(e.target.value);
+                      setSelectedSlots([]);
+                    }}
                     min={new Date().toISOString().split('T')[0]}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 bg-white text-black"
                     required
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                {selectedDate && (
                   <div>
-                    <label className="block text-sm font-bold text-black mb-2">
-                      Start Time
+                    <label className="block text-sm font-bold text-black mb-3">
+                      Available Time Slots (Click to select multiple consecutive slots)
                     </label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-96 overflow-y-auto p-2">
+                      {availableSlots.map((slot) => {
+                        const isSelected = selectedSlots.some(s => s.id === slot.id);
+                        return (
+                          <button
+                            key={slot.id}
+                            type="button"
+                            onClick={() => handleSlotSelect(slot)}
+                            disabled={!slot.available}
+                            className={`p-4 rounded-lg border-2 transition-all duration-200 ${
+                              isSelected
+                                ? 'border-yellow-400 bg-yellow-50 shadow-md'
+                                : slot.available
+                                ? 'border-green-300 bg-green-50 hover:border-green-400 hover:shadow-sm cursor-pointer'
+                                : slot.isPast
+                                ? 'border-gray-200 bg-gray-100 cursor-not-allowed opacity-50'
+                                : 'border-red-200 bg-red-50 cursor-not-allowed opacity-70'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center mb-2">
+                              <Clock className={`h-4 w-4 ${
+                                isSelected
+                                  ? 'text-yellow-600'
+                                  : slot.available
+                                  ? 'text-green-600'
+                                  : 'text-gray-400'
+                              }`} />
+                            </div>
+                            <div className="text-center">
+                              <p className={`text-sm font-bold ${
+                                isSelected
+                                  ? 'text-black'
+                                  : slot.available
+                                  ? 'text-green-700'
+                                  : 'text-gray-500'
+                              }`}>
+                                {slot.display}
+                              </p>
+                              <p className="text-xs mt-1 text-gray-600">
+                                {slot.isPast ? 'Past' : slot.isBooked ? 'Booked' : 'Available'}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {availableSlots.length === 0 && (
+                      <p className="text-center text-gray-600 py-4">Loading available slots...</p>
+                    )}
+                  </div>
+                )}
+
+                {selectedSlots.length > 0 && (
+                  <>
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                      <p className="text-sm font-bold text-black mb-2">Selected Time Slots:</p>
+                      <div className="space-y-1">
+                        <p className="text-black font-medium">
+                          {selectedSlots[0].display.split(' - ')[0]} - {selectedSlots[selectedSlots.length - 1].display.split(' - ')[1]}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Duration: {selectedSlots.length} hour{selectedSlots.length > 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSlots([])}
+                        className="mt-3 text-sm text-red-600 hover:text-red-700 font-medium"
+                      >
+                        Clear Selection
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-black mb-2">
+                        Number of Participants
+                      </label>
                       <input
-                        type="time"
-                        value={startTime}
-                        onChange={(e) => setStartTime(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 bg-white text-black"
+                        type="number"
+                        value={participants}
+                        onChange={(e) => setParticipants(e.target.value)}
+                        min="1"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 bg-white text-black"
+                        placeholder="Enter number of participants"
                         required
                       />
                     </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-sm font-bold text-black mb-2">
-                      End Time
-                    </label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                      <input
-                        type="time"
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 bg-white text-black"
+                    <div>
+                      <label className="block text-sm font-bold text-black mb-2">
+                        Purpose of Booking
+                      </label>
+                      <textarea
+                        value={purpose}
+                        onChange={(e) => setPurpose(e.target.value)}
+                        rows={4}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 resize-none bg-white text-black"
+                        placeholder="Describe the purpose of your booking..."
                         required
                       />
                     </div>
-                  </div>
-                </div>
 
-                <div>
-                  <label className="block text-sm font-bold text-black mb-2">
-                    Number of Participants
-                  </label>
-                  <input
-                    type="number"
-                    value={participants}
-                    onChange={(e) => setParticipants(e.target.value)}
-                    min="1"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 bg-white text-black"
-                    placeholder="Enter number of participants"
-                    required
-                  />
-                </div>
+                    <div>
+                      <label className="block text-sm font-bold text-black mb-2">
+                        Special Requirements (Optional)
+                      </label>
+                      <textarea
+                        value={specialRequirements}
+                        onChange={(e) => setSpecialRequirements(e.target.value)}
+                        rows={3}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 resize-none bg-white text-black"
+                        placeholder="Any special arrangements needed..."
+                      />
+                    </div>
 
-                <div>
-                  <label className="block text-sm font-bold text-black mb-2">
-                    Purpose of Booking
-                  </label>
-                  <textarea
-                    value={purpose}
-                    onChange={(e) => setPurpose(e.target.value)}
-                    rows={4}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 resize-none bg-white text-black"
-                    placeholder="Describe the purpose of your booking..."
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-bold text-black mb-2">
-                    Special Requirements (Optional)
-                  </label>
-                  <textarea
-                    value={specialRequirements}
-                    onChange={(e) => setSpecialRequirements(e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-400 resize-none bg-white text-black"
-                    placeholder="Any special arrangements needed..."
-                  />
-                </div>
-
-                <button
-                  onClick={handleSubmit}
-                  disabled={loading}
-                  className="w-full bg-yellow-500 hover:bg-yellow-600 text-white py-4 px-6 rounded-lg font-bold text-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg"
-                >
-                  {loading ? 'Submitting Request...' : 'Submit Booking Request'}
-                </button>
+                    <button
+                      onClick={handleSubmit}
+                      disabled={loading}
+                      className="w-full bg-yellow-500 hover:bg-yellow-600 text-white py-4 px-6 rounded-lg font-bold text-lg focus:outline-none focus:ring-2 focus:ring-yellow-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg"
+                    >
+                      {loading ? 'Submitting Request...' : 'Submit Booking Request'}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -535,7 +665,7 @@ const filterBookings = () => {
                 </li>
                 <li className="flex items-start">
                   <span className="w-2 h-2 bg-black rounded-full mr-3 mt-2 flex-shrink-0"></span>
-                  Maximum booking duration is 4 hours
+                  Each time slot is 1 hour long
                 </li>
                 <li className="flex items-start">
                   <span className="w-2 h-2 bg-black rounded-full mr-3 mt-2 flex-shrink-0"></span>

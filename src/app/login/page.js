@@ -850,7 +850,7 @@ export default function Login() {
                 )}
                 
                 <p className="text-sm font-medium text-black">
-                  {isLogin ? "Don&apos;t have an account?" : "Already have an account?"}{' '}
+                  {isLogin ? "Don't have an account?" : "Already have an account?"}{' '}
                   <button
                     type="button"
                     onClick={() => {
